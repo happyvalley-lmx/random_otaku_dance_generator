@@ -1,0 +1,2 @@
+# random_otaku_dance_generator
+基于python-ffmpeg的随舞音频文件生成器
