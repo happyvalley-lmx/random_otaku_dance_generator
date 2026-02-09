@@ -22,6 +22,14 @@ def concatenate_audio(input_file1, input_file2, output_file):
     except Exception as e:
         print(f'拼接音频文件时出现错误: {str(e)}')
 
+def concatenate_audio_2(input_file1, input_file2, output_file):
+    # 使用ffmpeg-python的方式实现拼接两个音频文件
+    try:
+        ffmpeg.input(input_file1).input(input_file2).output(output_file, ac=2).run(overwrite_output=True)
+        print(f'音频文件已拼接并保存到 {output_file}')
+    except Exception as e:
+        print(f'拼接音频文件时出现错误: {str(e)}')
+
 # 裁剪乐曲
 def cut_song(input_file, output_file, start_time, end_time):
     try:
@@ -58,7 +66,7 @@ def cut_and_fade(input_file_raw, output_file, start_time, end_time):
     temp_nomiku_out = f"cache/temp_nomiku_out_{input_file_raw}"
     add_fade_out_effects(temp_nomiku_in, temp_nomiku_out, end_time-start_time)
 
-    concatenate_audio("songs/mix.mp3", temp_nomiku_out, output_file)
+    concatenate_audio_2("songs/mix.mp3", temp_nomiku_out, output_file)
     
 
 # 使用csv处理
