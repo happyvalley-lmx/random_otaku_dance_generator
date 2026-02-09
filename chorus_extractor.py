@@ -3,13 +3,13 @@ import librosa
 import scipy
 from sklearn.cluster import KMeans
 
-def extract_chorus_intervals(path, k=5, min_segment_duration=10.0, bpm_aggregate='median'):
+def extract_chorus_intervals(path, k=5, min_segment_duration=10.0, bpm_aggregate='median', num_candidates=5):
     """Extract probable chorus interval(s) from an audio file.
 
     Implements the approach described in the article: CQT -> beat-sync -> recurrence matrix
     -> combine with path adjacency (MFCC) -> spectral clustering via Laplacian/evecs -> kmeans
 
-    Returns: list of (start_time, end_time) in seconds for candidate chorus segments (sorted).
+    Returns: list of (start_time, end_time) in seconds for candidate chorus segments (sorted by energy).
     """
     y, sr = librosa.load(path, sr=None)
 
@@ -101,12 +101,36 @@ def extract_chorus_intervals(path, k=5, min_segment_duration=10.0, bpm_aggregate
     if not label_energy:
         return []
 
-    # pick the label with highest energy
-    target_label = max(label_energy.items(), key=lambda x: x[1])[0]
-    # choose the last segment for that label (often chorus occurs later)
-    seg_list = label_time_map.get(target_label, [])
-    if not seg_list:
-        return []
-    chosen = seg_list[-1]
+    # Sort labels by energy in descending order
+    sorted_labels = sorted(label_energy.items(), key=lambda x: x[1], reverse=True)
+    
+    # Collect top segments from different labels
+    results = []
+    added_segments = set()  # Track added segments to avoid duplicates
+    
+    for label, energy in sorted_labels:
+        seg_list = label_time_map.get(label, [])
+        # Add segments from this label, prioritizing later occurrences (often chorus occurs later)
+        for t0, t1 in reversed(seg_list):  # Reverse to get later segments first
+            if (t0, t1) not in added_segments:
+                results.append((t0, t1))
+                added_segments.add((t0, t1))
+                if len(results) >= num_candidates:
+                    break
+        if len(results) >= num_candidates:
+            break
 
-    return [chosen]
+    # If we still have fewer than desired candidates, add more from top labels
+    if len(results) < num_candidates:
+        for label, energy in sorted_labels:
+            if len(results) >= num_candidates:
+                break
+            seg_list = label_time_map.get(label, [])
+            for t0, t1 in reversed(seg_list):
+                if (t0, t1) not in added_segments:
+                    results.append((t0, t1))
+                    added_segments.add((t0, t1))
+                    if len(results) >= num_candidates:
+                        break
+
+    return results

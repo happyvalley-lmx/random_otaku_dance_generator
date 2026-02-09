@@ -13,7 +13,7 @@ from mutagen import File as MutagenFile
 class OtakuDanceGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020600)")
+        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020900)")
         self.root.geometry("1200x750")
 
         # 确保基础目录存在
@@ -67,8 +67,8 @@ class OtakuDanceGUI:
         ttk.Button(button_frame, text="添加曲目", command=self.add_song).grid(row=0, column=0, padx=5)
         ttk.Button(button_frame, text="删除曲目", command=self.delete_song).grid(row=0, column=1, padx=5)
         ttk.Button(button_frame, text="编辑曲目", command=self.edit_song).grid(row=0, column=2, padx=5)
-        ttk.Button(button_frame, text="加载CSV", command=self.load_csv_dialog).grid(row=0, column=3, padx=5)
-        ttk.Button(button_frame, text="保存CSV", command=self.save_csv_dialog).grid(row=0, column=4, padx=5)
+        ttk.Button(button_frame, text="加载工程(CSV)", command=self.load_csv_dialog).grid(row=0, column=3, padx=5)
+        ttk.Button(button_frame, text="保存工程(CSV)", command=self.save_csv_dialog).grid(row=0, column=4, padx=5)
 
         # 右侧控制面板
         right_frame = ttk.LabelFrame(main_frame, text="操作", padding="10")
@@ -414,20 +414,23 @@ class SongDialog:
         self.comment_var = tk.StringVar()
         self.comment_entry = ttk.Entry(main_frame, textvariable=self.comment_var, width=35)
         self.comment_entry.grid(row=3, column=1, pady=5, padx=5)
+        
+        # 预览片段按钮
+        ttk.Button(main_frame, text="预览片段", command=self.preview_segment).grid(row=3, column=2, padx=5, pady=5)
 
         # --- Row 4: 音频预览区域 ---
         preview_frame = ttk.LabelFrame(main_frame, text="音频预览", padding="10")
         preview_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
 
         self.time_label = ttk.Label(preview_frame, text="00:00 / 00:00")
-        self.time_label.grid(row=0, column=0, columnspan=3, pady=5)
+        self.time_label.grid(row=0, column=0, columnspan=4, pady=5)
 
         # 进度条
         self.progress_var = tk.DoubleVar()
         self.progress_scale = ttk.Scale(preview_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.progress_var)
-        self.progress_scale.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=5)
+        self.progress_scale.grid(row=1, column=0, columnspan=4, sticky=(tk.W, tk.E), pady=5)
         self.progress_scale.state(['disabled'])
-        
+
         self.progress_scale.bind("<ButtonRelease-1>", self.on_slider_release)
 
         # 控制按钮
@@ -436,6 +439,9 @@ class SongDialog:
 
         ttk.Button(preview_frame, text="设为开始时间", command=self.set_start_time).grid(row=2, column=1, padx=5, pady=5)
         ttk.Button(preview_frame, text="设为结束时间", command=self.set_end_time).grid(row=2, column=2, padx=5, pady=5)
+        
+        # 副歌提取按钮
+        ttk.Button(preview_frame, text="提取副歌", command=self.extract_chorus).grid(row=2, column=3, padx=5, pady=5)
 
         # --- Row 5: 底部按钮 ---
         btn_frame = ttk.Frame(main_frame)
@@ -684,6 +690,536 @@ class SongDialog:
     def cancel(self):
         self.stop_audio()
         self.dialog.destroy()
+
+    def extract_chorus(self):
+        """提取副歌功能"""
+        filename = self.filename_var.get().strip()
+        if not filename:
+            messagebox.showwarning("警告", "请先选择音频文件")
+            return
+
+        filepath = f"songs/{filename}"
+        if not os.path.exists(filepath):
+            messagebox.showerror("错误", f"找不到音频文件: {filepath}")
+            return
+
+        # 创建副歌提取对话框
+        ChorusExtractionDialog(self.dialog, filepath, self)
+
+    def preview_segment(self):
+        """预览当前设置的片段"""
+        filename = self.filename_var.get().strip()
+        if not filename:
+            messagebox.showwarning("警告", "请先选择音频文件")
+            return
+
+        filepath = f"songs/{filename}"
+        if not os.path.exists(filepath):
+            messagebox.showerror("错误", f"找不到音频文件: {filepath}")
+            return
+
+        # 获取开始和结束时间
+        try:
+            start_time = self.mmss_to_sec(self.start_time_var.get())
+            end_time = self.mmss_to_sec(self.end_time_var.get())
+        except ValueError:
+            messagebox.showerror("错误", "时间格式不正确")
+            return
+
+        if start_time >= end_time:
+            messagebox.showerror("错误", "结束时间必须大于开始时间")
+            return
+
+        # 如果当前正在播放，先停止
+        if self.is_playing:
+            self.stop_audio()
+
+        # 设置播放位置为开始时间
+        self.current_pos = start_time
+        self.progress_var.set(start_time)
+        self.update_time_label()
+
+        # 开始播放
+        try:
+            pygame.mixer.music.load(filepath)
+            pygame.mixer.music.play(start=start_time)
+            self.is_playing = True
+            self.play_button.config(text="暂停")
+            self.play_start_time = time.time()
+            self.track_start_pos = start_time
+            self.stop_thread_flag = False
+            threading.Thread(target=self.update_progress_for_segment, args=(end_time,), daemon=True).start()
+        except Exception as e:
+            messagebox.showerror("错误", f"播放失败: {str(e)}")
+
+    def update_progress_for_segment(self, end_time):
+        """更新进度条并检查是否到达片段结束时间"""
+        while self.is_playing and not self.stop_thread_flag:
+            if not pygame.mixer.music.get_busy(): break
+            elapsed = time.time() - self.play_start_time
+            current = self.track_start_pos + elapsed
+            if current > self.audio_length: current = self.audio_length
+            if current > end_time: current = end_time  # 限制在片段结束时间
+            self.current_pos = current
+            self.progress_var.set(current)
+            self.update_time_label()
+            
+            # 如果到达片段结束时间，自动停止播放
+            if current >= end_time:
+                self.stop_audio()
+                break
+                
+            time.sleep(0.1)
+        if self.is_playing:
+            self.is_playing = False
+            try: self.play_button.config(text="播放")
+            except: pass
+
+    def on_closing(self):
+        self.stop_audio()
+        self.dialog.destroy()
+
+class ChorusExtractionDialog:
+    def __init__(self, parent, filepath, song_dialog):
+        self.parent = parent
+        self.filepath = filepath
+        self.song_dialog = song_dialog
+        self.intervals = []
+        
+        # 初始化 mixer
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("副歌提取结果(实验性)")
+        self.dialog.geometry("700x700")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+
+        # 居中
+        self.dialog.geometry("+%d+%d" % (parent.winfo_rootx() + 50, parent.winfo_rooty() + 50))
+
+        main_frame = ttk.Frame(self.dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 标题
+        ttk.Label(main_frame, text="检测到的可能是副歌的片段:", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0, 10))
+
+        # 创建树形视图显示片段
+        columns = ('序号', '开始时间', '结束时间', '时长')
+        self.tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=10)
+
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100, anchor=tk.CENTER)
+
+        # 添加滚动条
+        tree_scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scrollbar.set)
+
+        self.tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(0, 10))
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 音频预览区域
+        preview_frame = ttk.LabelFrame(main_frame, text="音频预览", padding="10")
+        preview_frame.pack(fill=tk.X, pady=(0, 10))
+
+        self.time_label = ttk.Label(preview_frame, text="00:00 / 00:00")
+        self.time_label.pack()
+
+        # 进度条
+        self.progress_var = tk.DoubleVar()
+        self.progress_scale = ttk.Scale(preview_frame, from_=0, to=100, orient=tk.HORIZONTAL, variable=self.progress_var)
+        self.progress_scale.pack(fill=tk.X, pady=5, padx=10)
+        self.progress_scale.state(['disabled'])
+        self.progress_scale.bind("<ButtonRelease-1>", self.on_slider_release)
+
+        # 控制按钮
+        control_frame = ttk.Frame(preview_frame)
+        control_frame.pack(fill=tk.X, pady=5)
+
+        self.play_button = ttk.Button(control_frame, text="播放", command=self.toggle_playback)
+        self.play_button.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(control_frame, text="播放选中片段", command=self.play_selected_segment).pack(side=tk.LEFT, padx=5)
+
+        # 从选中片段设置时间
+        selected_time_frame = ttk.Frame(control_frame)
+        selected_time_frame.pack(fill=tk.X, pady=2)
+        ttk.Button(selected_time_frame, text="设为开始时间", command=self.set_start_time).pack(side=tk.LEFT, padx=5)
+        ttk.Button(selected_time_frame, text="设为结束时间", command=self.set_end_time).pack(side=tk.LEFT, padx=5)
+
+        # 手动时间设置区域
+        manual_frame = ttk.LabelFrame(main_frame, text="手动时间设置", padding="10")
+        manual_frame.pack(fill=tk.X, pady=(10, 0))
+
+        # 开始时间设置
+        start_time_frame = ttk.Frame(manual_frame)
+        start_time_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(start_time_frame, text="开始时间:").pack(side=tk.LEFT)
+        self.manual_start_time = tk.StringVar(value="0:00")
+        self.manual_start_entry = ttk.Entry(start_time_frame, textvariable=self.manual_start_time, width=15)
+        self.manual_start_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(start_time_frame, text="快速选择当前片段开始时间", command=self.set_start_from_selection).pack(side=tk.LEFT, padx=5)
+
+        # 结束时间设置
+        end_time_frame = ttk.Frame(manual_frame)
+        end_time_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(end_time_frame, text="结束时间:").pack(side=tk.LEFT)
+        self.manual_end_time = tk.StringVar(value="0:00")
+        self.manual_end_entry = ttk.Entry(end_time_frame, textvariable=self.manual_end_time, width=15)
+        self.manual_end_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(end_time_frame, text="快速选择当前片段结束时间", command=self.set_end_from_selection).pack(side=tk.LEFT, padx=5)
+
+        # 确认按钮
+        confirm_frame = ttk.Frame(manual_frame)
+        confirm_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(confirm_frame, text="确认时间", command=self.confirm_manual_times).pack(side=tk.LEFT, padx=5)
+
+        # 底部按钮
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(button_frame, text="快速应用选中片段", command=self.apply_selected).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="关闭", command=self.cancel).pack(side=tk.RIGHT, padx=5)
+
+        # 初始化音频
+        self.is_playing = False
+        self.current_pos = 0.0
+        self.audio_length = 0
+        self.stop_thread_flag = False
+        self.play_start_time = 0
+        self.track_start_pos = 0
+        
+        self.load_audio(filepath)
+        
+        # 开始提取副歌
+        self.extract_chorus_async()
+
+    def extract_chorus_async(self):
+        """异步提取副歌，避免界面卡顿"""
+        self.dialog.config(cursor="wait")
+        self.parent.config(cursor="wait")
+        self.dialog.update()
+        
+        # 在新线程中执行提取
+        thread = threading.Thread(target=self._extract_chorus_internal)
+        thread.daemon = True
+        thread.start()
+
+    def _extract_chorus_internal(self):
+        """内部执行副歌提取"""
+        try:
+            # 导入副歌提取模块
+            import sys
+            from pathlib import Path
+            _ROOT = Path(__file__).resolve().parent
+            if str(_ROOT) not in sys.path:
+                sys.path.insert(0, str(_ROOT))
+            from chorus_extractor import extract_chorus_intervals
+
+            # 调用副歌提取函数，请求返回多个候选片段
+            self.intervals = extract_chorus_intervals(self.filepath, num_candidates=10)  # 请求最多10个候选片段
+            
+            # 在主线程中更新UI
+            self.dialog.after(0, self._update_ui_with_results)
+            
+        except ImportError:
+            self.dialog.after(0, lambda: messagebox.showerror("错误", "缺少必要的库，请安装: librosa, numpy, scipy, scikit-learn\n命令: pip install librosa numpy scipy scikit-learn"))
+            self.dialog.after(0, self.cancel)
+        except Exception as e:
+            self.dialog.after(0, lambda: messagebox.showerror("错误", f"提取副歌时发生错误: {str(e)}"))
+            self.dialog.after(0, self.cancel)
+        finally:
+            # 恢复光标
+            self.dialog.after(0, lambda: self.dialog.config(cursor=""))
+            self.dialog.after(0, lambda: self.parent.config(cursor=""))
+
+    def _update_ui_with_results(self):
+        """更新UI显示结果"""
+        if self.intervals:
+            # 清空现有项目
+            for item in self.tree.get_children():
+                self.tree.delete(item)
+            
+            # 添加检测到的片段
+            for i, (start_time, end_time) in enumerate(self.intervals):
+                duration = end_time - start_time
+                self.tree.insert('', 'end', values=(
+                    i+1,
+                    f"{self.sec_to_mmss(start_time)}",
+                    f"{self.sec_to_mmss(end_time)}",
+                    f"{self.sec_to_mmss(duration)}"
+                ), tags=(start_time, end_time))  # 使用tags保存原始数值用于后续处理
+            
+            # 默认选择第一项
+            children = self.tree.get_children()
+            if children:
+                self.tree.selection_set(children[0])
+                self.tree.focus(children[0])
+        else:
+            messagebox.showinfo("提示", "未检测到明显的副歌段落")
+            self.cancel()
+
+    def load_audio(self, filepath):
+        if os.path.exists(filepath):
+            try:
+                pygame.mixer.music.load(filepath)
+                self.audio_length = 0
+                try:
+                    audio = MutagenFile(filepath)
+                    if audio and audio.info:
+                        self.audio_length = audio.info.length
+                except: pass
+                
+                if self.audio_length == 0:
+                    try:
+                        sound = pygame.mixer.Sound(filepath)
+                        self.audio_length = sound.get_length()
+                    except: pass
+                
+                if self.audio_length == 0: self.audio_length = 120
+
+                self.progress_scale.configure(to=self.audio_length)
+                self.progress_scale.state(['!disabled'])
+                self.update_time_label()
+                
+            except Exception as e:
+                print(f"Load error: {e}")
+                self.progress_scale.state(['disabled'])
+        else:
+            self.progress_scale.state(['disabled'])
+
+    def on_slider_release(self, event):
+        if self.audio_length > 0:
+            pos = self.progress_scale.get()
+            self.current_pos = pos
+            self.update_time_label()
+            if self.is_playing:
+                self.restart_playback(pos)
+
+    def restart_playback(self, start_pos):
+        if os.path.exists(self.filepath):
+            pygame.mixer.music.stop()
+            pygame.mixer.music.load(self.filepath)
+            pygame.mixer.music.play(start=start_pos)
+            self.play_start_time = time.time()
+            self.track_start_pos = start_pos
+            
+            # 确保线程正在运行
+            if not self.is_playing:
+                self.is_playing = True
+                self.play_button.config(text="暂停")
+                self.stop_thread_flag = False
+                threading.Thread(target=self.update_progress, daemon=True).start()
+
+    def toggle_playback(self):
+        if not os.path.exists(self.filepath): return
+
+        if not self.is_playing:
+            try:
+                pygame.mixer.music.load(self.filepath)
+                pygame.mixer.music.play(start=self.current_pos)
+                self.is_playing = True
+                self.play_button.config(text="暂停")
+                self.play_start_time = time.time()
+                self.track_start_pos = self.current_pos
+                self.stop_thread_flag = False
+                threading.Thread(target=self.update_progress, daemon=True).start()
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+        else:
+            self.stop_audio()
+
+    def play_selected_segment(self):
+        """播放选中的片段"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先在上方选择一个片段")
+            return
+
+        item = self.tree.item(selection[0])
+        values = item['tags']
+        start_time = float(values[0])
+        
+        # 跳转到选中片段的开始位置并播放
+        self.current_pos = start_time
+        self.progress_var.set(start_time)
+        self.update_time_label()
+        
+        if self.is_playing:
+            self.restart_playback(start_time)
+        else:
+            pygame.mixer.music.stop()
+            pygame.mixer.music.load(self.filepath)
+            pygame.mixer.music.play(start=start_time)
+            self.is_playing = True
+            self.play_button.config(text="暂停")
+            self.play_start_time = time.time()
+            self.track_start_pos = start_time
+            self.stop_thread_flag = False
+            threading.Thread(target=self.update_progress, daemon=True).start()
+
+    def update_progress(self):
+        while self.is_playing and not self.stop_thread_flag:
+            if not pygame.mixer.music.get_busy(): break
+            elapsed = time.time() - self.play_start_time
+            current = self.track_start_pos + elapsed
+            if current > self.audio_length: current = self.audio_length
+            self.current_pos = current
+            self.progress_var.set(current)
+            self.update_time_label()
+            
+            # 检查是否正在播放选中的片段，如果是则检查是否到达片段结束时间
+            selection = self.tree.selection()
+            if selection:
+                item = self.tree.item(selection[0])
+                tags = item['tags']  # 使用tags中的原始数值，而不是values中的格式化时间
+                end_time = float(tags[1])  # tags[1] 是结束时间的原始浮点值
+                # 如果当前播放位置超过了选中片段的结束时间，则自动暂停
+                if current >= end_time:
+                    self.stop_audio()
+                    break
+                    
+            time.sleep(0.1)
+        if self.is_playing:
+            self.is_playing = False
+            try: self.play_button.config(text="播放")
+            except: pass
+
+    def stop_audio(self):
+        self.stop_thread_flag = True
+        pygame.mixer.music.stop()
+        self.is_playing = False
+        self.play_button.config(text="播放")
+
+    def update_time_label(self):
+        c_min, c_sec = divmod(int(self.current_pos), 60)
+        t_min, t_sec = divmod(int(self.audio_length), 60)
+        self.time_label.config(text=f"{c_min:02d}:{c_sec:02d} / {t_min:02d}:{t_sec:02d}")
+
+    def apply_selected(self):
+        """应用选中的片段到主对话框"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个片段")
+            return
+
+        item = self.tree.item(selection[0])
+        tags = item['tags']
+        # 直接使用tags中保存的原始数值（已经是秒数格式）
+        start_time = float(tags[0])
+        end_time = float(tags[1])
+        
+        # 如果当前正在播放，先停止播放
+        if self.is_playing:
+            self.stop_audio()
+        
+        # 更新主对话框的时间字段
+        self.song_dialog.start_time_var.set(self.song_dialog.sec_to_mmss(start_time))
+        self.song_dialog.end_time_var.set(self.song_dialog.sec_to_mmss(end_time))
+        
+        # 更新主对话框的进度条位置
+        self.song_dialog.current_pos = start_time
+        self.song_dialog.progress_var.set(start_time)
+        self.song_dialog.update_time_label()
+        
+        self.dialog.destroy()
+
+    def cancel(self):
+        self.stop_audio()
+        self.dialog.destroy()
+
+    def set_start_from_selection(self):
+        """将选中片段的开始时间设置到手动输入框"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个片段")
+            return
+
+        item = self.tree.item(selection[0])
+        values = item['tags']
+        start_time = float(values[0])
+        self.manual_start_time.set(self.sec_to_mmss(start_time))
+
+    def set_end_from_selection(self):
+        """将选中片段的结束时间设置到手动输入框"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个片段")
+            return
+
+        item = self.tree.item(selection[0])
+        values = item['tags']
+        end_time = float(values[1])
+        self.manual_end_time.set(self.sec_to_mmss(end_time))
+
+    def confirm_manual_times(self):
+        """确认手动输入的时间并应用到主对话框"""
+        try:
+            start_time = self.mmss_to_sec(self.manual_start_time.get())
+            end_time = self.mmss_to_sec(self.manual_end_time.get())
+            
+            # 更新主对话框的时间字段
+            self.song_dialog.start_time_var.set(self.song_dialog.sec_to_mmss(start_time))
+            self.song_dialog.end_time_var.set(self.song_dialog.sec_to_mmss(end_time))
+            
+            # 更新主对话框的进度条位置
+            self.song_dialog.current_pos = start_time
+            self.song_dialog.progress_var.set(start_time)
+            self.song_dialog.update_time_label()
+            
+            messagebox.showinfo("成功", "时间已更新到主对话框")
+            
+        except ValueError:
+            messagebox.showerror("错误", "请输入正确的时间格式 (MM:SS 或 秒数)")
+
+        # 如果当前正在播放，先停止播放
+        if self.is_playing:
+            self.stop_audio()
+
+        self.dialog.destroy()
+
+    # --- 辅助工具：时间转换 ---
+    def sec_to_mmss(self, seconds_str):
+        """将秒数(字符串或浮点)转换为 MM:SS.ss 格式"""
+        try:
+            total_sec = float(seconds_str)
+            m = int(total_sec // 60)
+            s = total_sec % 60
+            # 如果有小数部分，保留两位小数，否则只显示整数
+            if s % 1 == 0:
+                return f"{m}:{int(s):02d}"
+            else:
+                return f"{m}:{s:05.2f}"
+        except ValueError:
+            return "0:00"
+
+    def mmss_to_sec(self, mmss_str):
+        """将 MM:SS 格式或纯数字转换为秒数(浮点)"""
+        mmss_str = mmss_str.strip()
+        if not mmss_str:
+            return 0.0
+        try:
+            if ":" in mmss_str:
+                parts = mmss_str.split(":")
+                if len(parts) == 2:
+                    return float(parts[0]) * 60 + float(parts[1])
+                elif len(parts) == 3: # HH:MM:SS
+                    return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+            else:
+                return float(mmss_str)
+        except ValueError:
+            return 0.0
+        return 0.0
+
+    def set_start_time(self):
+        # 将当前秒数转换为 MM:SS 格式填入
+        self.manual_start_time.set(self.sec_to_mmss(self.current_pos))
+
+    def set_end_time(self):
+        # 将当前秒数转换为 MM:SS 格式填入
+        self.manual_end_time.set(self.sec_to_mmss(self.current_pos))
 
     def on_closing(self):
         self.stop_audio()
