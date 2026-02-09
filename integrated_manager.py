@@ -13,7 +13,7 @@ from mutagen import File as MutagenFile
 class OtakuDanceGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020901)")
+        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020902)")
         self.root.geometry("1200x750")
 
         # 确保基础目录存在
@@ -71,7 +71,7 @@ class OtakuDanceGUI:
         ttk.Button(button_frame, text="保存工程(CSV)", command=self.save_csv_dialog).grid(row=0, column=4, padx=5)
 
         # 总时长显示标签
-        self.duration_label = ttk.Label(left_frame, text="总时长: 00:00:00", font=("Arial", 10, "bold"))
+        self.duration_label = ttk.Label(left_frame, text="")
         self.duration_label.grid(row=2, column=0, columnspan=2, pady=5, sticky=(tk.W, tk.E))
 
         # 右侧控制面板
@@ -226,7 +226,8 @@ class OtakuDanceGUI:
         minutes = int((total_duration % 3600) // 60)
         seconds = int(total_duration % 60)
         duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        self.duration_label.config(text=f"总时长: {duration_str}")
+        song_count = len(self.song_data)
+        self.duration_label.config(text=f"当前曲目数: {song_count}  /  总时长: {duration_str}")
 
     def add_song(self):
         dialog = SongDialog(self.root, "添加曲目", use_file_dialog=True)
