@@ -13,7 +13,7 @@ from mutagen import File as MutagenFile
 class OtakuDanceGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020900)")
+        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020901)")
         self.root.geometry("1200x750")
 
         # 确保基础目录存在
@@ -69,6 +69,10 @@ class OtakuDanceGUI:
         ttk.Button(button_frame, text="编辑曲目", command=self.edit_song).grid(row=0, column=2, padx=5)
         ttk.Button(button_frame, text="加载工程(CSV)", command=self.load_csv_dialog).grid(row=0, column=3, padx=5)
         ttk.Button(button_frame, text="保存工程(CSV)", command=self.save_csv_dialog).grid(row=0, column=4, padx=5)
+
+        # 总时长显示标签
+        self.duration_label = ttk.Label(left_frame, text="总时长: 00:00:00", font=("Arial", 10, "bold"))
+        self.duration_label.grid(row=2, column=0, columnspan=2, pady=5, sticky=(tk.W, tk.E))
 
         # 右侧控制面板
         right_frame = ttk.LabelFrame(main_frame, text="操作", padding="10")
@@ -133,6 +137,8 @@ class OtakuDanceGUI:
             if not data_read:
                 raise Exception("无法识别文件编码")
 
+            self.update_duration_display()  # 更新总时长显示
+
         except FileNotFoundError:
             messagebox.showwarning("警告", f"文件 {filename} 不存在，将创建新文件。")
         except Exception as e:
@@ -159,11 +165,75 @@ class OtakuDanceGUI:
         except Exception as e:
             messagebox.showerror("错误", f"保存出错: {str(e)}")
 
+    def get_mix_duration(self):
+        """获取mix.mp3的时长"""
+        mix_path = "songs/mix.mp3"
+        if os.path.exists(mix_path):
+            try:
+                audio = MutagenFile(mix_path)
+                if audio and audio.info:
+                    return audio.info.length
+            except Exception:
+                pass
+            try:
+                import pygame
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init()
+                sound = pygame.mixer.Sound(mix_path)
+                return sound.get_length()
+            except Exception:
+                pass
+        return 0  # 如果没有mix.mp3，则时长为0
+
+    def calculate_single_song_duration(self, start_time_str, end_time_str):
+        """计算单首歌曲的时长（结束时间-开始时间）"""
+        try:
+            start_time = float(start_time_str)
+            end_time = float(end_time_str)
+            return max(0, end_time - start_time)  # 确保时长不为负数
+        except ValueError:
+            return 0
+
+    def calculate_total_duration(self):
+        """计算总时长：(乐曲数量*(单曲平均时长+mix.mp3的时长))"""
+        if not self.song_data:
+            return 0
+        
+        # 计算所有歌曲的总时长
+        total_song_duration = 0
+        for row in self.song_data:
+            if len(row) >= 3:  # 确保有足够的列
+                start_time = row[1]
+                end_time = row[2]
+                single_duration = self.calculate_single_song_duration(start_time, end_time)
+                total_song_duration += single_duration
+        
+        # 计算平均单曲时长
+        avg_song_duration = total_song_duration / len(self.song_data) if self.song_data else 0
+        
+        # 获取mix.mp3的时长
+        mix_duration = self.get_mix_duration()
+        
+        # 总时长 = 歌曲数量 * (平均单曲时长 + mix.mp3时长)
+        total_duration = len(self.song_data) * (avg_song_duration + mix_duration)
+        
+        return total_duration
+
+    def update_duration_display(self):
+        """更新总时长显示"""
+        total_duration = self.calculate_total_duration()
+        hours = int(total_duration // 3600)
+        minutes = int((total_duration % 3600) // 60)
+        seconds = int(total_duration % 60)
+        duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        self.duration_label.config(text=f"总时长: {duration_str}")
+
     def add_song(self):
         dialog = SongDialog(self.root, "添加曲目", use_file_dialog=True)
         if dialog.result:
             self.song_data.append(dialog.result)
             self.tree.insert('', 'end', values=dialog.result)
+            self.update_duration_display()  # 更新总时长显示
 
     def delete_song(self):
         selected_items = self.tree.selection()
@@ -174,6 +244,7 @@ class OtakuDanceGUI:
             index = self.tree.index(item)
             self.tree.delete(item)
             del self.song_data[index]
+        self.update_duration_display()  # 更新总时长显示
 
     def edit_song(self):
         selected_items = self.tree.selection()
@@ -187,6 +258,7 @@ class OtakuDanceGUI:
             self.tree.item(item, values=dialog.result)
             index = self.tree.index(item)
             self.song_data[index] = dialog.result
+            self.update_duration_display()  # 更新总时长显示
 
     def generate_audio(self):
         self.save_csv("songs.csv")
