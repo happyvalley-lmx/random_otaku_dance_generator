@@ -5,3 +5,6 @@
 ._.DS_Store
 .AppleDouble
 .LSOverride
+/venv
+/build
+/dist
