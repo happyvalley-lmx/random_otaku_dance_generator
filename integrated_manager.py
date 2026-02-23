@@ -13,7 +13,7 @@ from mutagen import File as MutagenFile
 class OtakuDanceGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("乐谷的随舞音频生成器 可视化版 (2026020902)")
+        self.root.title("乐谷的随舞音频生成器 可视化版 (2026022100)")
         self.root.geometry("1200x750")
 
         # 确保基础目录存在
@@ -415,9 +415,11 @@ class OtakuDanceGUI:
         abs_list = [os.path.abspath(f) for f in file_list]
         with open(output_file, 'w', encoding='UTF-8') as file:
             for item in abs_list:
-                # ffmpeg concat protocol 格式要求
-                file.write(f"file '{item.replace(os.sep, '/')}'\n")
-
+                # 统一使用正斜杠作为路径分隔符（FFmpeg 兼容性更好）
+                formatted_item = item.replace(os.sep, '/')
+                # 处理单引号转义：将 ' 替换为 '\''
+                escaped_item = formatted_item.replace("'", r"'\''")
+                file.write(f"file '{escaped_item}'\n")
     def concatenate_audio_from_list(self, output_file):
         try:
             (
@@ -1299,6 +1301,7 @@ class ChorusExtractionDialog:
         self.dialog.destroy()
 
 if __name__ == "__main__":
+    print("正在为您启动乐谷的随舞音频编辑器主窗口...\n本命令行用于后台处理ffmpeg库的调用，主窗口运行时请保持命令行窗口开启~")
     root = tk.Tk()
     app = OtakuDanceGUI(root)
     root.mainloop()
