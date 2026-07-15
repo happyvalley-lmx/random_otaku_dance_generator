@@ -47,12 +47,20 @@ class OtakuDanceGUI:
         left_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 10))
 
         # 表格
-        columns = ('文件名', '开始时间', '结束时间', '备注')
+        columns = ('文件名', '开始时间', '结束时间', '单曲时长', '备注')
         self.tree = ttk.Treeview(left_frame, columns=columns, show='headings', height=15)
 
+        # 每列自定义宽度：文件名和备注更宽，时长列略窄
+        col_widths = {
+            '文件名': 160,
+            '开始时间': 70,
+            '结束时间': 70,
+            '单曲时长': 70,
+            '备注': 100,
+        }
         for col in columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=80)
+            self.tree.column(col, width=col_widths.get(col, 80), anchor=tk.CENTER)
 
         scrollbar = ttk.Scrollbar(left_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -126,7 +134,7 @@ class OtakuDanceGUI:
                         for row in reader:
                             if row: # 避免空行
                                 self.song_data.append(row)
-                                self.tree.insert('', 'end', values=row)
+                                self.tree.insert('', 'end', values=self.row_to_tree_values(row))
                     data_read = True
                     break
                 except UnicodeDecodeError:
@@ -194,6 +202,32 @@ class OtakuDanceGUI:
         except ValueError:
             return 0
 
+    def format_duration(self, seconds):
+        """将秒数格式化为 M:SS 显示"""
+        try:
+            total_sec = max(0, float(seconds))
+        except (ValueError, TypeError):
+            return "0:00"
+        m = int(total_sec // 60)
+        s = total_sec - m * 60
+        if abs(s - round(s)) < 0.01:
+            return f"{m}:{int(round(s)):02d}"
+        return f"{m}:{s:05.2f}"
+
+    def row_to_tree_values(self, row):
+        """把 CSV 行 [文件名, 开始, 结束, 备注] 转成 Treeview 显示行（追加"单曲时长"列）"""
+        if not row:
+            return row
+        filename = row[0] if len(row) > 0 else ''
+        start = row[1] if len(row) > 1 else ''
+        end = row[2] if len(row) > 2 else ''
+        comment = row[3] if len(row) > 3 else ''
+        duration = self.format_duration(self.calculate_single_song_duration(start, end))
+        # 开始/结束时间也格式化为 M:SS.ss 显示（CSV 中仍保留原始秒数）
+        start_disp = self.format_duration(start) if start != '' else ''
+        end_disp = self.format_duration(end) if end != '' else ''
+        return (filename, start_disp, end_disp, duration, comment)
+
     def calculate_total_duration(self):
         """计算总时长：(乐曲数量*(单曲平均时长+mix.mp3的时长))"""
         if not self.song_data:
@@ -233,7 +267,7 @@ class OtakuDanceGUI:
         dialog = SongDialog(self.root, "添加曲目", use_file_dialog=True)
         if dialog.result:
             self.song_data.append(dialog.result)
-            self.tree.insert('', 'end', values=dialog.result)
+            self.tree.insert('', 'end', values=self.row_to_tree_values(dialog.result))
             self.update_duration_display()  # 更新总时长显示
 
     def delete_song(self):
@@ -253,11 +287,12 @@ class OtakuDanceGUI:
             messagebox.showwarning("警告", "请选择要编辑的曲目")
             return
         item = selected_items[0]
-        values = self.tree.item(item, 'values')
+        index = self.tree.index(item)
+        # 从 song_data 取原始 4 列数据传给对话框，避免 Treeview 中多出的"单曲时长"列干扰
+        values = self.song_data[index]
         dialog = SongDialog(self.root, "编辑曲目", values)
         if dialog.result:
-            self.tree.item(item, values=dialog.result)
-            index = self.tree.index(item)
+            self.tree.item(item, values=self.row_to_tree_values(dialog.result))
             self.song_data[index] = dialog.result
             self.update_duration_display()  # 更新总时长显示
 
